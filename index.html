@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="es" class="dark bg-slate-950 text-slate-100">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#020617" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'self';"
+  />
+  <meta
+    name="description"
+    content="Config & URL Security Inspector — Auditor local de archivos .env, generador de .env.example y analizador estático de endpoints."
+  />
+  <title>Config &amp; URL Security Inspector</title>
+
+  <!-- Bloqueo inmediato de fondo oscuro mate antes de pintar el primer frame -->
+  <style>
+    html, body { background-color: #020617; color: #f1f5f9; color-scheme: dark; }
+    [hidden] { display: none !important; }
+  </style>
+  <link rel="stylesheet" href="./styles/app.css" />
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-cyan-500/25 selection:text-cyan-200 argon-hero-glow">
+  <div class="mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-5 sm:px-6 lg:px-8">
+
+    <!-- Cabecera principal estilo Argon Dark -->
+    <header class="rounded-2xl bg-slate-900/85 border border-slate-800 p-4 sm:p-6 shadow-lg shadow-black/20 backdrop-blur-sm">
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div class="flex items-start gap-3.5">
+          <div
+            aria-hidden="true"
+            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500/20 to-indigo-500/20 border border-cyan-400/30 text-cyan-300 shadow-inner"
+          >
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              <path d="m9 12 2 2 4-4" />
+            </svg>
+          </div>
+          <div>
+            <div class="flex flex-wrap items-center gap-2">
+              <h1 class="text-lg sm:text-xl font-bold tracking-tight text-slate-100">
+                Config &amp; URL Security Inspector
+              </h1>
+              <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-emerald-300">
+                <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>100% Client-Side
+              </span>
+            </div>
+            <p class="mt-1 text-xs sm:text-sm text-slate-400">
+              Inspección estática de secretos en <code class="font-mono text-slate-300">.env</code> y diagnóstico de endpoints sin enviar un solo byte por la red (<code class="font-mono text-cyan-300">CSP connect-src 'none'</code>).
+            </p>
+          </div>
+        </div>
+
+        <!-- Navegación por pestañas tipo Pill (Argon Dark) -->
+        <nav aria-label="Utilidades de inspección" class="w-full lg:w-auto">
+          <div
+            role="tablist"
+            aria-label="Módulos de seguridad"
+            class="flex w-full lg:w-auto items-center gap-1.5 rounded-2xl bg-slate-950/90 border border-slate-800 p-1.5"
+          >
+            <button
+              id="tab-env"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="panel-env"
+              data-module-tab="env"
+              class="group relative flex flex-1 sm:flex-initial min-h-[46px] items-center justify-center gap-2.5 rounded-xl bg-slate-800 border border-cyan-500/40 px-4 sm:px-5 py-2.5 text-xs sm:text-sm font-semibold text-cyan-300 shadow-argon-glow transition-all"
+            >
+              <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+              <span>Auditor .env</span>
+              <span
+                id="tab-badge-env"
+                hidden
+                class="rounded-full bg-rose-500/20 border border-rose-500/40 px-2 py-0.5 font-mono text-[11px] font-bold text-rose-300"
+              >0</span>
+            </button>
+
+            <button
+              id="tab-url"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="panel-url"
+              tabindex="-1"
+              data-module-tab="url"
+              class="group relative flex flex-1 sm:flex-initial min-h-[46px] items-center justify-center gap-2.5 rounded-xl border border-transparent hover:bg-slate-800/45 px-4 sm:px-5 py-2.5 text-xs sm:text-sm font-medium text-slate-400 hover:text-slate-200 transition-all"
+            >
+              <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </svg>
+              <span>Analizador URL</span>
+              <span
+                id="tab-badge-url"
+                hidden
+                class="rounded-full bg-rose-500/20 border border-rose-500/40 px-2 py-0.5 font-mono text-[11px] font-bold text-rose-300"
+              >0</span>
+            </button>
+          </div>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Área de trabajo principal -->
+    <main class="mt-6 flex-1">
+
+      <!-- =====================================================================
+           MÓDULO 1: AUDITOR DE ARCHIVOS .ENV Y GENERADOR DE .ENV.EXAMPLE
+           ===================================================================== -->
+      <section
+        id="panel-env"
+        role="tabpanel"
+        aria-labelledby="tab-env"
+        class="grid grid-cols-1 gap-6 lg:grid-cols-12"
+      >
+        <!-- Columna izquierda: Entrada dual (.env editor + Drag & Drop) -->
+        <div class="space-y-5 lg:col-span-6">
+          <div class="rounded-2xl bg-slate-900/90 border border-slate-800 p-4 sm:p-5 shadow-lg shadow-black/20">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 class="text-base font-semibold text-slate-100">Entrada de Configuración (.env)</h2>
+                <p class="text-xs text-slate-400">Pega tus variables o arrastra un archivo local para auditarlo línea por línea.</p>
+              </div>
+              <span
+                id="env-source-badge"
+                class="rounded-lg bg-slate-800/90 border border-slate-700/60 px-2.5 py-1 font-mono text-[11px] text-slate-300"
+              >
+                Entrada directa en memoria
+              </span>
+            </div>
+
+            <!-- Zona Drag & Drop + Selector local -->
+            <div
+              id="env-dropzone"
+              class="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-dashed border-slate-700/80 bg-slate-950/60 p-3.5 transition-colors"
+            >
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-800/90 border border-slate-700/60 text-cyan-400">
+                  <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                </div>
+                <div>
+                  <p class="text-xs font-medium text-slate-200">Arrastra tu archivo <code class="font-mono text-cyan-300">.env</code> aquí</p>
+                  <p class="text-[11px] text-slate-500">Lectura local mediante FileReader (máx. 512 KB)</p>
+                </div>
+              </div>
+
+              <label
+                for="env-file-input"
+                class="inline-flex min-h-[44px] cursor-pointer items-center justify-center rounded-xl bg-slate-800 hover:bg-slate-700/80 border border-slate-700/70 px-4 py-2 text-xs font-semibold text-cyan-300 transition-colors"
+              >
+                Seleccionar archivo
+              </label>
+              <!-- Sin filtro MIME restrictivo para que el selector del SO no oculte dotfiles (.env, .env.local) -->
+              <input id="env-file-input" type="file" class="sr-only" />
+            </div>
+
+            <!-- Editor oscuro con numeración de líneas y resaltado sintáctico sincronizado -->
+            <div class="mt-4">
+              <div class="flex items-center justify-between rounded-t-xl bg-slate-950 border border-b-0 border-slate-800 px-3.5 py-2">
+                <div class="flex items-center gap-1.5" aria-hidden="true">
+                  <span class="h-2.5 w-2.5 rounded-full bg-rose-500/70"></span>
+                  <span class="h-2.5 w-2.5 rounded-full bg-amber-400/70"></span>
+                  <span class="h-2.5 w-2.5 rounded-full bg-emerald-400/70"></span>
+                  <span class="ml-2 font-mono text-[11px] text-slate-500">.env (memoria volátil)</span>
+                </div>
+                <button
+                  id="env-copy-hash-btn"
+                  type="button"
+                  disabled
+                  class="min-h-[32px] rounded-md bg-slate-900 hover:bg-slate-800 disabled:opacity-50 border border-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-400 hover:text-cyan-300 transition-colors"
+                  title="Copiar huella SHA-256 calculada localmente con Web Crypto"
+                >
+                  <span id="env-hash-label">SHA-256: —</span>
+                </button>
+              </div>
+
+              <div class="relative flex h-72 sm:h-80 overflow-hidden rounded-b-xl border border-slate-800 bg-slate-950/95 focus-within:border-cyan-500/60">
+                <div
+                  id="env-line-gutter"
+                  aria-hidden="true"
+                  class="env-editor-metrics select-none overflow-hidden border-r border-slate-800/90 bg-slate-900/50 py-3.5 pl-3 pr-2.5 text-right"
+                >
+                  <span class="block text-slate-600">1</span>
+                </div>
+
+                <div class="relative flex-1 overflow-hidden">
+                  <pre
+                    id="env-highlight-pre"
+                    aria-hidden="true"
+                    class="env-editor-metrics pointer-events-none absolute inset-0 m-0 overflow-hidden p-3.5 text-slate-300"
+                  ><code id="env-highlight-code"></code></pre>
+
+                  <label for="env-raw-input" class="sr-only">Contenido del archivo .env a inspeccionar</label>
+                  <textarea
+                    id="env-raw-input"
+                    spellcheck="false"
+                    autocapitalize="off"
+                    autocomplete="off"
+                    autocorrect="off"
+                    placeholder="# Pega tu configuración .env aquí&#10;DATABASE_URL=postgres://user:secret@db.host:5432/app&#10;STRIPE_SECRET_KEY=sk_live_...&#10;ADMIN_PASSWORD=..."
+                    class="env-editor-metrics env-textarea-overlay absolute inset-0 m-0 h-full w-full overflow-auto p-3.5 focus:outline-none"
+                  ></textarea>
+                </div>
+              </div>
+            </div>
+
+            <!-- Barra de utilidades táctiles (hitboxes >= 44px) -->
+            <div class="mt-4 flex flex-wrap items-center gap-2.5">
+              <button
+                id="env-load-sample-btn"
+                type="button"
+                class="min-h-[44px] rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-400/30 px-3.5 py-2 text-xs font-semibold text-indigo-300 transition-colors"
+              >
+                Cargar muestra con riesgos
+              </button>
+
+              <button
+                id="env-generate-secret-btn"
+                type="button"
+                class="min-h-[44px] rounded-xl bg-slate-800 hover:bg-slate-700/80 border border-slate-700/60 px-3.5 py-2 text-xs font-medium text-cyan-300 transition-colors"
+                title="Generar secreto criptográfico de 32 bytes con crypto.getRandomValues"
+              >
+                Generar secreto 256-bit
+              </button>
+
+              <button
+                id="env-clear-btn"
+                type="button"
+                class="ml-auto min-h-[44px] rounded-xl bg-slate-900 hover:bg-rose-500/15 border border-slate-800 hover:border-rose-500/35 px-3.5 py-2 text-xs font-medium text-slate-400 hover:text-rose-300 transition-colors"
+              >
+                Limpiar
+              </button>
+            </div>
+          </div>
+
+          <!-- Generador reactivo de .env.example sanitizado -->
+          <div class="rounded-2xl bg-slate-900/90 border border-slate-800 p-4 sm:p-5 shadow-lg shadow-black/20">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div class="flex items-center gap-2">
+                  <h3 class="text-base font-semibold text-slate-100">Plantilla <code class="font-mono text-cyan-300">.env.example</code></h3>
+                  <span class="rounded-md bg-cyan-500/10 border border-cyan-500/25 px-2 py-0.5 font-mono text-[10px] font-semibold text-cyan-300">
+                    REACTIVO
+                  </span>
+                </div>
+                <p class="mt-0.5 text-xs text-slate-400">
+                  Conserva claves, comentarios y valores inocuos; sustituye secretos por placeholders contextuales.
+                </p>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  id="env-copy-example-btn"
+                  type="button"
+                  disabled
+                  class="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 disabled:opacity-40 disabled:pointer-events-none border border-cyan-400/35 px-4 py-2 text-xs font-semibold text-cyan-300 transition-all"
+                >
+                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  <span data-copy-label>Copiar .env.example</span>
+                </button>
+
+                <button
+                  id="env-download-example-btn"
+                  type="button"
+                  disabled
+                  class="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-slate-800 hover:bg-slate-700/80 disabled:opacity-40 disabled:pointer-events-none border border-slate-700/60 px-3.5 py-2 text-xs font-medium text-slate-200 transition-colors"
+                  title="Descargar .env.example"
+                >
+                  Descargar
+                </button>
+              </div>
+            </div>
+
+            <pre
+              id="env-example-output"
+              aria-live="polite"
+              class="mt-3.5 max-h-64 overflow-auto rounded-xl bg-slate-950/95 border border-slate-800 p-3.5 font-mono text-xs leading-relaxed text-slate-300"
+            ># El archivo .env.example sanitizado se generará automáticamente aquí…</pre>
+          </div>
+        </div>
+
+        <!-- Columna derecha: Resultados de auditoría de secretos -->
+        <div class="lg:col-span-6">
+          <div class="rounded-2xl bg-slate-900/90 border border-slate-800 p-4 sm:p-5 shadow-lg shadow-black/20">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 class="text-base font-semibold text-slate-100">Hallazgos de Seguridad</h2>
+                <p class="text-xs text-slate-400">Cadenas de conexión, API Keys, JWTs y contraseñas expuestas.</p>
+              </div>
+
+              <div class="flex items-center gap-1.5" role="group" aria-label="Filtrar hallazgos por severidad">
+                <button type="button" data-env-filter="ALL" aria-pressed="true" class="min-h-[44px] rounded-lg bg-cyan-500/15 border border-cyan-400/40 px-3.5 py-2 text-xs font-semibold text-cyan-300">
+                  Todos
+                </button>
+                <button type="button" data-env-filter="ALTA" aria-pressed="false" class="min-h-[44px] rounded-lg bg-slate-900/80 border border-slate-800 px-3.5 py-2 text-xs font-medium text-slate-400">
+                  Alta
+                </button>
+                <button type="button" data-env-filter="MEDIA" aria-pressed="false" class="min-h-[44px] rounded-lg bg-slate-900/80 border border-slate-800 px-3.5 py-2 text-xs font-medium text-slate-400">
+                  Media
+                </button>
+              </div>
+            </div>
+
+            <div id="env-summary-strip" class="mt-4"></div>
+
+            <div id="env-findings-list" class="mt-4 space-y-3 max-h-[38rem] overflow-y-auto pr-1"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =====================================================================
+           MÓDULO 2: ANALIZADOR ESTÁTICO DE URLS / ENDPOINTS
+           ===================================================================== -->
+      <section
+        id="panel-url"
+        role="tabpanel"
+        aria-labelledby="tab-url"
+        hidden
+        class="space-y-6"
+      >
+        <!-- Tarjeta de entrada de Endpoint -->
+        <div class="rounded-2xl bg-slate-900/90 border border-slate-800 p-4 sm:p-6 shadow-lg shadow-black/20">
+          <div class="max-w-3xl">
+            <h2 class="text-base sm:text-lg font-semibold text-slate-100">
+              Analizador Estático de URLs y Endpoints de API
+            </h2>
+            <p class="mt-1 text-xs sm:text-sm text-slate-400">
+              Inspecciona transporte TLS, credenciales embebidas (<code class="font-mono text-slate-300">user:password@host</code>), fugas en Query String y puertos críticos sin conectar con el servidor destino.
+            </p>
+          </div>
+
+          <form id="url-inspector-form" class="mt-4 flex flex-col sm:flex-row gap-3" novalidate>
+            <div class="relative flex-1">
+              <label for="url-raw-input" class="sr-only">URL o endpoint de API a inspeccionar</label>
+              <input
+                id="url-raw-input"
+                type="url"
+                inputmode="url"
+                spellcheck="false"
+                autocapitalize="off"
+                autocomplete="off"
+                placeholder="https://api.midominio.com/v1/users?token=..."
+                class="min-h-[48px] w-full rounded-xl bg-slate-950/95 border border-slate-800 focus:border-cyan-500/60 px-4 py-3 font-mono text-base sm:text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none transition-colors"
+              />
+            </div>
+
+            <div class="flex items-center gap-2.5">
+              <button
+                type="submit"
+                class="flex-1 sm:flex-initial min-h-[48px] rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 px-5 py-2.5 text-sm font-semibold text-cyan-200 shadow-argon-glow transition-all"
+              >
+                Inspeccionar
+              </button>
+              <button
+                id="url-clear-btn"
+                type="button"
+                class="min-h-[48px] rounded-xl bg-slate-800/90 hover:bg-rose-500/15 border border-slate-700/70 hover:border-rose-500/35 px-4 py-2.5 text-xs font-medium text-slate-300 hover:text-rose-300 transition-colors"
+              >
+                Limpiar
+              </button>
+            </div>
+          </form>
+
+          <!-- Escenarios rápidos de prueba táctiles -->
+          <div class="mt-4 flex flex-wrap items-center gap-2">
+            <span class="text-xs text-slate-500 mr-1">Casos de prueba:</span>
+
+            <button
+              type="button"
+              data-url-preset="http-query-leak"
+              class="min-h-[44px] rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 px-3.5 py-2 text-xs font-medium text-amber-300 transition-colors"
+            >
+              HTTP + Query Token (:8080)
+            </button>
+
+            <button
+              type="button"
+              data-url-preset="uri-creds-db"
+              class="min-h-[44px] rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 px-3.5 py-2 text-xs font-medium text-rose-300 transition-colors"
+            >
+              URI user:pass + Mongo (:27017)
+            </button>
+
+            <button
+              type="button"
+              data-url-preset="clean-https"
+              class="min-h-[44px] rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 px-3.5 py-2 text-xs font-medium text-emerald-300 transition-colors"
+            >
+              Endpoint HTTPS Seguro
+            </button>
+          </div>
+        </div>
+
+        <!-- Estado global del análisis -->
+        <div id="url-status-slot"></div>
+
+        <!-- Desglose anatómico + Tarjetas de diagnóstico -->
+        <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <div id="url-anatomy-slot" class="lg:col-span-5"></div>
+          <div id="url-findings-slot" class="space-y-4 lg:col-span-7"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Pie técnico conciso -->
+    <footer class="mt-10 border-t border-slate-800/80 pt-5 pb-2 text-center sm:flex sm:items-center sm:justify-between text-xs text-slate-500">
+      <p>Config &amp; URL Security Inspector · Ejecución local aislada sin almacenamiento persistente.</p>
+      <p class="mt-1 sm:mt-0 font-mono text-[11px] text-slate-500">Web Crypto · WHATWG URL · FileReader · Clipboard API</p>
+    </footer>
+  </div>
+
+  <!-- Toast accesible no bloqueante -->
+  <div
+    id="inspector-toast"
+    role="status"
+    aria-live="polite"
+    class="pointer-events-none fixed bottom-5 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-50 opacity-0 translate-y-2 transition-all duration-200"
+  >
+    <div data-toast-card class="flex items-center gap-3 rounded-xl bg-slate-900/95 backdrop-blur-md px-4 py-3 border border-cyan-500/35 shadow-xl shadow-black/40">
+      <span data-toast-dot class="h-2.5 w-2.5 shrink-0 rounded-full bg-cyan-400"></span>
+      <p data-toast-message class="text-xs sm:text-sm font-medium text-slate-100"></p>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

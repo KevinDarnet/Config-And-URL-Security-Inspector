@@ -1,0 +1,17 @@
+{
+  "name": "config-url-security-inspector",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Auditor client-side de archivos .env y analizador estático de seguridad para URLs/endpoints.",
+  "scripts": {
+    "dev": "python3 -m http.server 5173",
+    "test": "node --test tests/*.test.js",
+    "build:css": "tailwindcss -c tailwind.config.js -i ./src/styles/main.css -o ./styles/app.css --minify",
+    "build": "node ./scripts/build.js",
+    "deploy": "npm run build && firebase deploy --only hosting"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
