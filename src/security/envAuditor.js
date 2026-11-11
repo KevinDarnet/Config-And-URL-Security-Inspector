@@ -5,7 +5,8 @@
 
 export const SEVERITY = Object.freeze({
   HIGH: 'ALTA',
-  MEDIUM: 'MEDIA'
+  MEDIUM: 'MEDIA',
+  LOW: 'BAJA'
 });
 
 const CONNECTION_URI_PATTERN = /^(mongodb(?:\+srv)?|postgres(?:ql)?|mysql|mariadb|redis(?:s)?|amqp(?:s)?|mssql|sqlserver):\/\/(.+)$/i;
@@ -42,14 +43,6 @@ const TOKEN_SIGNATURES = [
     pattern: /^AIza[0-9A-Za-z_-]{33,37}$/,
     placeholder: 'your_google_cloud_api_key',
     remediation: 'Restringe la clave por HTTP Referrer o dirección IP en Google Cloud Console y evita subirla sin restricciones de cuota.'
-  },
-  {
-    id: 'aws-access-key',
-    label: 'Access Key ID de AWS IAM (AKIA / ASIA)',
-    severity: SEVERITY.HIGH,
-    pattern: /^(?:AKIA|ASIA)[0-9A-Z]{16}$/,
-    placeholder: 'AKIAIOSFODNN7EXAMPLE',
-    remediation: 'Rota la credencial en AWS IAM inmediatamente y prioriza roles OIDC / Instance Profiles sobre claves estáticas.'
   },
   {
     id: 'github-pat',
@@ -90,6 +83,13 @@ const PASSWORD_KEY_SEGMENT = /(?:^|_)(PASSWORD|PASSWD|PWD|PASS|PASSPHRASE)(?:$|_
 const SECRET_KEY_SEGMENT = /(?:^|_)(SECRET|PRIVATE_KEY|API_KEY|ACCESS_KEY|AUTH_TOKEN|ACCESS_TOKEN|REFRESH_TOKEN|CLIENT_SECRET|SIGNING_KEY|ENCRYPTION_KEY|MASTER_KEY|WEBHOOK_SECRET)(?:$|_)/i;
 const CLIENT_EXPOSED_PREFIX = /^(VITE_|NEXT_PUBLIC_|REACT_APP_|PUBLIC_)/i;
 
+const AWS_ACCESS_KEY_ID_PATTERN = /(AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}/;
+const INSECURE_HTTP_URL_PATTERN = /http:\/\/[^\s'"<>]*/gi;
+const SAFE_HTTP_LOOPBACK_PATTERN = /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/?#]|$)/i;
+const HTTP_HIGH_RISK_KEY_PATTERN = /(?:API|PROD|SERVICE|WEBHOOK|ENDPOINT)/i;
+const GLOBAL_BIND_KEY_PATTERN = /^(?:HOST|BIND_ADDRESS|LISTEN_ADDR)$/i;
+const REVERSE_PROXY_KEY_PATTERN = /(?:REVERSE_PROXY|PROXY_URL|TRUST_PROXY|NGINX|CADDY|TRAEFIK|CLOUDFLARE_TUNNEL)/i;
+
 const PLACEHOLDER_VALUE_PATTERNS = [
   /^<[^<>]+>$/,
   /^\[[^[\]]+\]$/,
@@ -97,7 +97,7 @@ const PLACEHOLDER_VALUE_PATTERNS = [
   /^(?:your_|replace_with|change_me|changeme|example|placeholder|todo|dummy|sample|insert_)/i,
   /_(?:here|placeholder|example)$/i,
   /^(?:xxx+|\*\*\*+|---+|\.\.\.+)$/i,
-  /^AKIAIOSFODNN7EXAMPLE$/,
+  /^AKIA_REPLACE_WITH_KEY_ID$/,
   /^sk_test_replace_with_stripe_key$/
 ];
 
@@ -268,7 +268,70 @@ function sanitizeConnectionUri(uriValue) {
   return `${scheme}://<db_user>:<db_password>@localhost:5432/<db_name>`;
 }
 
-function evaluateAssignmentRisk(parsedEntry) {
+function createEnvFinding({
+  id,
+  lineNumber,
+  key,
+  category,
+  severity,
+  title,
+  impact,
+  evidenceRedacted,
+  mitigation,
+  suggestedPlaceholder
+}) {
+  return {
+    id,
+    line: lineNumber,
+    lineNumber,
+    key,
+    category,
+    severity,
+    title,
+    impact,
+    evidenceRedacted,
+    maskedPreview: evidenceRedacted,
+    mitigation,
+    remediation: mitigation,
+    suggestedPlaceholder
+  };
+}
+
+function redactHttpEvidence(rawValue) {
+  return rawValue
+    .replace(/http:\/\/([^:/?#]+):([^@]+)@/gi, 'http://$1:••••••••@')
+    .replace(/([?&](?:token|key|api_key|apikey|auth|secret|password)=)[^&\s]+/gi, '$1••••••••');
+}
+
+function sanitizeInsecureHttpValue(rawValue) {
+  return rawValue.replace(INSECURE_HTTP_URL_PATTERN, (matchedUrl) =>
+    SAFE_HTTP_LOOPBACK_PATTERN.test(matchedUrl) ? matchedUrl : 'https://api.example.com/...'
+  );
+}
+
+function buildFileAuditContext(parsedEntries) {
+  let isNodeProduction = false;
+  let hasExplicitReverseProxy = false;
+
+  for (const entry of parsedEntries) {
+    if (entry.kind !== 'assignment') {
+      continue;
+    }
+
+    const { key, cleanValue } = entry;
+    if (/^NODE_ENV$/i.test(key) && /^production$/i.test(cleanValue)) {
+      isNodeProduction = true;
+    }
+
+    if (REVERSE_PROXY_KEY_PATTERN.test(key) && !/^(?:false|0|no|off|)$/i.test(cleanValue)) {
+      hasExplicitReverseProxy = true;
+    }
+  }
+
+  return { isNodeProduction, hasExplicitReverseProxy };
+}
+
+function evaluateAssignmentRisk(parsedEntry, fileContext = {}) {
   const { key, cleanValue, lineNumber } = parsedEntry;
 
   if (isLikelyPlaceholder(cleanValue)) {
@@ -287,8 +350,9 @@ function evaluateAssignmentRisk(parsedEntry) {
     const hasEmbeddedCredentials = /:\/\/[^:/?#]+:[^@]+@/.test(cleanValue);
     const pointsToLocalhost = /:\/\/(?:[^@]+@)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::|\/|$)/i.test(cleanValue);
     const severity = hasEmbeddedCredentials || !pointsToLocalhost ? SEVERITY.HIGH : SEVERITY.MEDIUM;
+    const evidenceRedacted = maskSensitiveValue(cleanValue);
 
-    return {
+    return createEnvFinding({
       id: `line-${lineNumber}-conn`,
       lineNumber,
       key,
@@ -297,33 +361,76 @@ function evaluateAssignmentRisk(parsedEntry) {
       title: hasEmbeddedCredentials
         ? `Credenciales incrustadas en URI ${scheme}://`
         : `Cadena de conexión ${scheme}:// en claro`,
-      maskedPreview: maskSensitiveValue(cleanValue),
-      remediation: `Sustituye el DSN real por placeholders en .env.example e inyecta la URI mediante secretos del entorno de despliegue.${clientBundleWarning}`,
+      impact: `Variable "${key}" (línea ${lineNumber}) expone una cadena de conexión ${scheme}:// (${evidenceRedacted}).`,
+      evidenceRedacted,
+      mitigation: `Sustituye el DSN real por placeholders en .env.example e inyecta la URI mediante secretos del entorno de despliegue.${clientBundleWarning}`,
       suggestedPlaceholder: sanitizeConnectionUri(cleanValue)
-    };
+    });
   }
 
-  // 2. Firmas conocidas de API Keys, tokens JWT y llaves privadas PEM.
+  // 2. Identificador de clave de acceso AWS (Access Key ID).
+  const awsMatch = cleanValue.match(AWS_ACCESS_KEY_ID_PATTERN) || key.match(AWS_ACCESS_KEY_ID_PATTERN);
+  if (awsMatch) {
+    const matchedId = awsMatch[0];
+    const redactedAwsId = `${matchedId.slice(0, 4)}****${matchedId.slice(-4)}`;
+
+    return createEnvFinding({
+      id: `line-${lineNumber}-aws-access-key-id`,
+      lineNumber,
+      key,
+      category: 'Identidad Cloud (AWS)',
+      severity: SEVERITY.MEDIUM,
+      title: 'Identificador de clave de acceso AWS (Access Key ID)',
+      impact: 'Aunque un Access Key ID por sí solo no permite autenticación sin su Secret Access Key asociada, identifica de forma unívoca una cuenta de AWS y superficie de ataque ante ataques dirigidos o filtraciones cruzadas.',
+      evidenceRedacted: redactedAwsId,
+      mitigation: `No hardcodees identificadores fijos de AWS en repositorios. Utiliza roles IAM (ej. IAM Roles for Service Accounts / EC2 Instance Profiles) o AWS STS para asumir identidades temporales.${clientBundleWarning}`,
+      suggestedPlaceholder: 'AKIA_REPLACE_WITH_KEY_ID'
+    });
+  }
+
+  // 3. Firmas conocidas de API Keys, tokens JWT y llaves privadas PEM.
   for (const signature of TOKEN_SIGNATURES) {
     if (signature.pattern.test(cleanValue)) {
-      return {
+      const evidenceRedacted = maskSensitiveValue(cleanValue);
+      return createEnvFinding({
         id: `line-${lineNumber}-${signature.id}`,
         lineNumber,
         key,
         category: 'API Key / Token',
         severity: exposedToClientBundle ? SEVERITY.HIGH : signature.severity,
         title: signature.label,
-        maskedPreview: maskSensitiveValue(cleanValue),
-        remediation: `${signature.remediation}${clientBundleWarning}`,
+        impact: `Variable "${key}" (línea ${lineNumber}) contiene un secreto o token activo (${evidenceRedacted}).`,
+        evidenceRedacted,
+        mitigation: `${signature.remediation}${clientBundleWarning}`,
         suggestedPlaceholder: signature.placeholder
-      };
+      });
     }
   }
 
-  // 3. Variables de contraseña con valor en texto plano.
+  // 4. Detección de URLs con transporte inseguro (HTTP plano, excluyendo loopback local).
+  const httpMatches = cleanValue.match(INSECURE_HTTP_URL_PATTERN) || [];
+  const nonLocalHttpMatches = httpMatches.filter((url) => !SAFE_HTTP_LOOPBACK_PATTERN.test(url));
+  if (nonLocalHttpMatches.length > 0) {
+    const severity = HTTP_HIGH_RISK_KEY_PATTERN.test(key) ? SEVERITY.HIGH : SEVERITY.MEDIUM;
+    return createEnvFinding({
+      id: `line-${lineNumber}-insecure-http`,
+      lineNumber,
+      key,
+      category: 'Transporte Inseguro',
+      severity,
+      title: 'Protocolo HTTP no cifrado en variable de entorno',
+      impact: 'Las peticiones dirigidas a este servicio viajarán en texto plano a través de la red, quedando expuestas a interceptación o manipulación Man-in-the-Middle (MITM).',
+      evidenceRedacted: redactHttpEvidence(cleanValue),
+      mitigation: `Actualiza la URI a HTTPS (https://) y asegura que el servidor remoto soporte TLS 1.2+.${clientBundleWarning}`,
+      suggestedPlaceholder: sanitizeInsecureHttpValue(cleanValue)
+    });
+  }
+
+  // 5. Variables de contraseña con valor en texto plano.
   if (PASSWORD_KEY_SEGMENT.test(key)) {
     const isWeak = cleanValue.length < 10 || COMMON_WEAK_PASSWORDS.has(cleanValue.toLowerCase());
-    return {
+    const evidenceRedacted = maskSensitiveValue(cleanValue);
+    return createEnvFinding({
       id: `line-${lineNumber}-password`,
       lineNumber,
       key,
@@ -332,22 +439,24 @@ function evaluateAssignmentRisk(parsedEntry) {
       title: isWeak
         ? 'Contraseña en texto plano (además débil o por defecto)'
         : 'Contraseña definida en texto plano',
-      maskedPreview: maskSensitiveValue(cleanValue),
-      remediation: `${
+      impact: `Variable "${key}" (línea ${lineNumber}) define una contraseña en texto plano (${evidenceRedacted}).`,
+      evidenceRedacted,
+      mitigation: `${
         isWeak
           ? 'El valor utiliza una clave predecible o menor a 10 caracteres. Genera una credencial aleatoria de alta entropía y '
           : ''
       }nunca versiones contraseñas reales; usa un gestor de secretos o variables efímeras.${clientBundleWarning}`,
       suggestedPlaceholder: 'change_me_locally'
-    };
+    });
   }
 
-  // 4. Variables semánticamente sensibles (SECRET, API_KEY, TOKEN, PRIVATE_KEY) con valor concreto.
+  // 6. Variables semánticamente sensibles (SECRET, API_KEY, TOKEN, PRIVATE_KEY) con valor concreto.
   if (SECRET_KEY_SEGMENT.test(key)) {
     const entropy = calculateShannonEntropy(cleanValue);
     const isShortOrPredictable = cleanValue.length < 16 || entropy < 3.2;
+    const evidenceRedacted = maskSensitiveValue(cleanValue);
 
-    return {
+    return createEnvFinding({
       id: `line-${lineNumber}-secret-key`,
       lineNumber,
       key,
@@ -356,64 +465,103 @@ function evaluateAssignmentRisk(parsedEntry) {
       title: isShortOrPredictable
         ? 'Secreto de aplicación en claro con baja entropía'
         : 'Secreto o token de aplicación expuesto en claro',
-      maskedPreview: maskSensitiveValue(cleanValue),
-      remediation: `${
+      impact: `Variable "${key}" (línea ${lineNumber}) expone un secreto de aplicación (${evidenceRedacted}).`,
+      evidenceRedacted,
+      mitigation: `${
         isShortOrPredictable
           ? 'Este secreto parece corto o predecible para firmar/cifrar datos (usa al menos 32 bytes CSPRNG). '
           : ''
       }Reemplázalo por un placeholder descriptivo antes de compartir la plantilla.${clientBundleWarning}`,
       suggestedPlaceholder: 'replace_with_32_byte_random_secret'
-    };
+    });
   }
 
-  // 5. Configuraciones operativas inseguras frecuentes en Node/backends.
+  // 7. Exposición de interfaces de red (HOST / BIND_ADDRESS / LISTEN_ADDR) y puerto :80 directo.
+  if (GLOBAL_BIND_KEY_PATTERN.test(key) && (cleanValue === '0.0.0.0' || cleanValue === '::' || cleanValue === '[::]')) {
+    return createEnvFinding({
+      id: `line-${lineNumber}-global-bind`,
+      lineNumber,
+      key,
+      category: 'Exposición de Red',
+      severity: SEVERITY.MEDIUM,
+      title: 'Enlace de red a todas las interfaces (0.0.0.0)',
+      impact: 'Vincular el servicio a 0.0.0.0 expone el socket a todas las interfaces de red locales y externas, exponiendo el puerto a la red física o a contenedores vecinos si no media un firewall estricto.',
+      evidenceRedacted: cleanValue,
+      mitigation: 'En entornos de desarrollo o detrás de un reverse proxy, enlaza a 127.0.0.1 (localhost). En producción contenerizada, restringe el acceso mediante políticas de red perimetrales.',
+      suggestedPlaceholder: '127.0.0.1'
+    });
+  }
+
+  if (
+    /^PORT$/i.test(key) &&
+    cleanValue === '80' &&
+    (fileContext.isNodeProduction || !fileContext.hasExplicitReverseProxy)
+  ) {
+    return createEnvFinding({
+      id: `line-${lineNumber}-port-80`,
+      lineNumber,
+      key,
+      category: 'Exposición de Red',
+      severity: fileContext.isNodeProduction ? SEVERITY.MEDIUM : SEVERITY.LOW,
+      title: 'Puerto estándar no cifrado (:80) configurado como escucha directa',
+      impact: 'Desplegar servicios sirviendo tráfico directamente en el puerto 80 sin terminación TLS expone la aplicación o requiere privilegios elevados innecesarios.',
+      evidenceRedacted: '80',
+      mitigation: 'Delega la escucha de los puertos 80/443 a un reverse proxy (Nginx, Caddy, Cloudflare Tunnel) y utiliza puertos no privilegiados de backend (ej. 3000, 8000) en bucle local.',
+      suggestedPlaceholder: '3000'
+    });
+  }
+
+  // 8. Configuraciones operativas inseguras frecuentes en Node/backends.
   if (key.toUpperCase() === 'NODE_TLS_REJECT_UNAUTHORIZED' && cleanValue === '0') {
-    return {
+    return createEnvFinding({
       id: `line-${lineNumber}-tls-disabled`,
       lineNumber,
       key,
       category: 'Configuración TLS',
       severity: SEVERITY.HIGH,
       title: 'Validación de certificados TLS deshabilitada globalmente',
-      maskedPreview: '0',
-      remediation: 'NODE_TLS_REJECT_UNAUTHORIZED=0 desactiva la verificación X.509 y expone todo el tráfico saliente a ataques MITM. Configura NODE_EXTRA_CA_CERTS si usas una CA interna.',
+      impact: 'Desactiva la verificación de certificados X.509 en Node.js exponiendo todas las conexiones salientes a ataques MITM.',
+      evidenceRedacted: '0',
+      mitigation: 'NODE_TLS_REJECT_UNAUTHORIZED=0 desactiva la verificación X.509 y expone todo el tráfico saliente a ataques MITM. Configura NODE_EXTRA_CA_CERTS si usas una CA interna.',
       suggestedPlaceholder: '1'
-    };
+    });
   }
 
   if (/^(?:APP_)?DEBUG$/i.test(key) && /^(?:true|1|yes)$/i.test(cleanValue)) {
-    return {
+    return createEnvFinding({
       id: `line-${lineNumber}-debug-enabled`,
       lineNumber,
       key,
       category: 'Exposición de Entorno',
       severity: SEVERITY.MEDIUM,
       title: 'Modo debug activo en configuración',
-      maskedPreview: cleanValue,
-      remediation: 'Asegúrate de forzar DEBUG=false en entornos públicos para evitar volcado de stack traces y variables internas ante errores HTTP 500.',
+      impact: 'El modo de depuración habilitado puede filtrar trazas de pila, rutas internas y variables ante excepciones.',
+      evidenceRedacted: cleanValue,
+      mitigation: 'Asegúrate de forzar DEBUG=false en entornos públicos para evitar volcado de stack traces y variables internas ante errores HTTP 500.',
       suggestedPlaceholder: 'false'
-    };
+    });
   }
 
   if (/CORS_ORIGIN/i.test(key) && cleanValue === '*') {
-    return {
+    return createEnvFinding({
       id: `line-${lineNumber}-cors-wildcard`,
       lineNumber,
       key,
       category: 'Política CORS',
       severity: SEVERITY.MEDIUM,
       title: 'Origen CORS comodín (*) permisivo',
-      maskedPreview: '*',
-      remediation: 'Restringe los orígenes permitidos a dominios explícitos (ej. https://app.midominio.com) en endpoints autenticados.',
+      impact: 'Permite que cualquier origen web realice peticiones cross-origin al servicio sin restricción de dominio.',
+      evidenceRedacted: '*',
+      mitigation: 'Restringe los orígenes permitidos a dominios explícitos (ej. https://app.midominio.com) en endpoints autenticados.',
       suggestedPlaceholder: 'https://app.example.com'
-    };
+    });
   }
 
   return null;
 }
 
 /**
- * Ejecuta la auditoría completa sobre el contenido .env y construye en un solo pase
+ * Ejecuta la auditoría completa sobre el contenido .env y construye
  * el archivo `.env.example` sanitizado conservando comentarios y claves legítimas.
  */
 export function auditEnvContent(rawContent) {
@@ -427,7 +575,8 @@ export function auditEnvContent(rawContent) {
         totalLines: 0,
         analyzedKeys: 0,
         highCount: 0,
-        mediumCount: 0
+        mediumCount: 0,
+        lowCount: 0
       },
       flaggedLineSeverity: new Map(),
       sanitizedExample: ''
@@ -435,16 +584,16 @@ export function auditEnvContent(rawContent) {
   }
 
   const lines = normalizedInput.split('\n');
+  const parsedEntries = lines.map((line, index) => parseEnvLine(line, index + 1));
+  const fileContext = buildFileAuditContext(parsedEntries);
+
   const findings = [];
   const malformedLines = [];
   const flaggedLineSeverity = new Map();
   const exampleLines = [];
   let analyzedKeys = 0;
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const lineNumber = index + 1;
-    const parsed = parseEnvLine(lines[index], lineNumber);
-
+  for (const parsed of parsedEntries) {
     if (parsed.kind === 'blank' || parsed.kind === 'comment') {
       exampleLines.push(parsed.rawLine);
       continue;
@@ -452,20 +601,23 @@ export function auditEnvContent(rawContent) {
 
     if (parsed.kind === 'malformed') {
       malformedLines.push({
-        lineNumber,
+        lineNumber: parsed.lineNumber,
         preview: parsed.rawLine.slice(0, 60)
       });
-      exampleLines.push(`# [Formato inválido omitido en línea ${lineNumber}]`);
+      exampleLines.push(`# [Formato inválido omitido en línea ${parsed.lineNumber}]`);
       continue;
     }
 
     analyzedKeys += 1;
-    const finding = evaluateAssignmentRisk(parsed);
+    const finding = evaluateAssignmentRisk(parsed, fileContext);
 
     if (finding) {
       findings.push(finding);
-      flaggedLineSeverity.set(lineNumber, finding.severity);
-      exampleLines.push(`${parsed.exportPrefix}${parsed.key}=${finding.suggestedPlaceholder}${parsed.inlineComment}`);
+      flaggedLineSeverity.set(parsed.lineNumber, finding.severity);
+      const formattedPlaceholder = parsed.quoteChar
+        ? `${parsed.quoteChar}${finding.suggestedPlaceholder}${parsed.quoteChar}`
+        : finding.suggestedPlaceholder;
+      exampleLines.push(`${parsed.exportPrefix}${parsed.key}=${formattedPlaceholder}${parsed.inlineComment}`);
     } else {
       const preservedValue = parsed.quoteChar
         ? `${parsed.quoteChar}${parsed.cleanValue}${parsed.quoteChar}`
@@ -476,6 +628,7 @@ export function auditEnvContent(rawContent) {
 
   const highCount = findings.filter((item) => item.severity === SEVERITY.HIGH).length;
   const mediumCount = findings.filter((item) => item.severity === SEVERITY.MEDIUM).length;
+  const lowCount = findings.filter((item) => item.severity === SEVERITY.LOW).length;
 
   return {
     findings,
@@ -484,7 +637,8 @@ export function auditEnvContent(rawContent) {
       totalLines: lines.length,
       analyzedKeys,
       highCount,
-      mediumCount
+      mediumCount,
+      lowCount
     },
     flaggedLineSeverity,
     sanitizedExample: exampleLines.join('\n')

@@ -40,14 +40,18 @@ export function renderHighlightedEnvHtml(rawContent, flaggedLineSeverity = new M
         ? 'text-rose-300'
         : lineSeverity === SEVERITY.MEDIUM
           ? 'text-amber-300'
-          : 'text-cyan-300';
+          : lineSeverity === SEVERITY.LOW
+            ? 'text-sky-300'
+            : 'text-cyan-300';
 
     const valueClass =
       lineSeverity === SEVERITY.HIGH
         ? 'text-rose-200 bg-rose-500/20'
         : lineSeverity === SEVERITY.MEDIUM
           ? 'text-amber-200 bg-amber-500/15'
-          : 'text-slate-300';
+          : lineSeverity === SEVERITY.LOW
+            ? 'text-sky-200 bg-sky-500/15'
+            : 'text-slate-300';
 
     const { valueSegment, commentSegment } = splitInlineCommentForDisplay(rest);
 

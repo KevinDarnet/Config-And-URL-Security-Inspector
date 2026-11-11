@@ -107,11 +107,22 @@ test('createInspectorStore notifica transiciones inmutables y limpia memoria baj
     rawUrl: 'https://example.com',
     inspectionReport: inspectEndpointUrl('https://example.com')
   });
+  store.setUrlDraft('https://edited.example.com');
+  assert.equal(store.getState().urlSession.inspectionReport, null);
+  assert.equal(store.getState().urlSession.rawUrl, 'https://edited.example.com');
+
+  store.setEnvDraft({ rawText: 'PORT=3000', sourceFileName: null });
+  assert.equal(store.getState().envSession.rawText, 'PORT=3000');
+  assert.equal(store.getState().envSession.auditReport, null);
+
   store.clearUrlSession();
   assert.equal(store.getState().urlSession.rawUrl, '');
 
   unsubscribe();
-  assert.deepEqual(events.map((e) => e.reason), ['module:switch', 'url:inspected', 'url:cleared']);
+  assert.deepEqual(
+    events.map((e) => e.reason),
+    ['module:switch', 'url:inspected', 'url:draft', 'env:draft', 'url:cleared']
+  );
 });
 
 test('renderHighlightedEnvHtml y escapeHtml neutralizan vectores DOM XSS en valores y comentarios', () => {
@@ -143,7 +154,8 @@ test('todos los selectores #id requeridos por los controladores existen en index
     'env-dropzone',
     'env-file-input',
     'env-source-badge',
-    'env-load-sample-btn',
+    'env-audit-btn',
+    'env-load-template-btn',
     'env-generate-secret-btn',
     'env-clear-btn',
     'env-summary-strip',
@@ -156,7 +168,9 @@ test('todos los selectores #id requeridos por los controladores existen en index
     'env-hash-label',
     'url-inspector-form',
     'url-raw-input',
+    'url-inspect-btn',
     'url-clear-btn',
+    'url-load-template-btn',
     'url-status-slot',
     'url-anatomy-slot',
     'url-findings-slot'
@@ -165,6 +179,9 @@ test('todos los selectores #id requeridos por los controladores existen en index
   for (const elementId of requiredIds) {
     assert.match(htmlContent, new RegExp(`id="${elementId}"`), `Falta id="${elementId}" en index.html`);
   }
+
+  assert.doesNotMatch(htmlContent, /data-url-preset/);
+  assert.doesNotMatch(htmlContent, /env-load-sample-btn/);
 });
 
 test('generateSecurityAuditPdf genera PDF 1.4 válido y redacta secretos en módulos .env y URL', () => {
@@ -194,6 +211,7 @@ test('generateSecurityAuditPdf genera PDF 1.4 válido y redacta secretos en mód
   assert.ok(envPdfText.startsWith('%PDF-1.4\n'));
   assert.ok(envPdfText.trimEnd().endsWith('%%EOF'));
   assert.match(envPdfText, /Reporte de Auditor/);
+  assert.match(envPdfText, /Origen: Entrada provista por el usuario \\\(Evaluaci/);
   assert.doesNotMatch(envPdfText, /Sup3rS3cret!/);
   assert.doesNotMatch(envPdfText, /sk_live_51Nabc1234567890XYZabcdef/);
 
@@ -225,4 +243,105 @@ test('generateSecurityAuditPdf genera PDF 1.4 válido y redacta secretos en mód
   });
   assert.ok(cleanPdf.pdfBytes.length > 500);
 });
+
+test('auditEnvContent detecta HTTP plano (excluyendo loopback), AWS Access Key ID, HOST 0.0.0.0/:: y PORT=80', () => {
+  const mixedEnv = [
+    'WEBHOOK_URL=http://hooks.partner.io/events',
+    'DOCS_URL=http://docs.internal.corp/guide',
+    'LOCAL_URL=http://localhost:3000/api',
+    'LOOPBACK_V4=http://127.0.0.1:8080/health',
+    'LOOPBACK_V6=http://[::1]:5173',
+    'AWS_ACCESS_KEY_ID = " AKIAIOSFODNN7EXAMPLE "',
+    'AWS_TEMP_KEY=ASIA1234567890ABMPLE',
+    'AWS_BILLING_KEY=ABIA1234567890ABTEST',
+    'AWS_CLOUD_KEY=ACCA1234567890ABCD12',
+    'HOST=0.0.0.0',
+    'BIND_ADDRESS=::',
+    'NODE_ENV=production',
+    'PORT=80'
+  ].join('\n');
+
+  const report = auditEnvContent(mixedEnv);
+
+  // Excepciones loopback no generan hallazgos
+  assert.equal(report.findings.find((f) => f.key === 'LOCAL_URL'), undefined);
+  assert.equal(report.findings.find((f) => f.key === 'LOOPBACK_V4'), undefined);
+  assert.equal(report.findings.find((f) => f.key === 'LOOPBACK_V6'), undefined);
+
+  // Regla 1: HTTP plano
+  const webhook = report.findings.find((f) => f.key === 'WEBHOOK_URL');
+  assert.equal(webhook?.severity, SEVERITY.HIGH);
+  assert.equal(webhook?.title, 'Protocolo HTTP no cifrado en variable de entorno');
+
+  const docs = report.findings.find((f) => f.key === 'DOCS_URL');
+  assert.equal(docs?.severity, SEVERITY.MEDIUM);
+
+  // Regla 2: AWS Access Key ID (incluyendo espacios, comillas y prefijos AKIA/ASIA/ABIA/ACCA) -> MEDIA
+  const awsAccess = report.findings.find((f) => f.key === 'AWS_ACCESS_KEY_ID');
+  assert.equal(awsAccess?.severity, SEVERITY.MEDIUM);
+  assert.equal(awsAccess?.evidenceRedacted, 'AKIA****MPLE');
+
+  assert.equal(report.findings.find((f) => f.key === 'AWS_TEMP_KEY')?.severity, SEVERITY.MEDIUM);
+  assert.equal(report.findings.find((f) => f.key === 'AWS_BILLING_KEY')?.severity, SEVERITY.MEDIUM);
+  assert.equal(report.findings.find((f) => f.key === 'AWS_CLOUD_KEY')?.severity, SEVERITY.MEDIUM);
+
+  // Regla 3A y 3B: HOST / BIND_ADDRESS y PORT=80 en producción
+  const host = report.findings.find((f) => f.key === 'HOST');
+  assert.equal(host?.severity, SEVERITY.MEDIUM);
+  assert.equal(host?.title, 'Enlace de red a todas las interfaces (0.0.0.0)');
+
+  const bind = report.findings.find((f) => f.key === 'BIND_ADDRESS');
+  assert.equal(bind?.severity, SEVERITY.MEDIUM);
+
+  const port80 = report.findings.find((f) => f.key === 'PORT');
+  assert.equal(port80?.severity, SEVERITY.MEDIUM);
+  assert.equal(port80?.title, 'Puerto estándar no cifrado (:80) configurado como escucha directa');
+
+  // Consistencia de estructura en cada hallazgo
+  for (const item of report.findings) {
+    assert.ok(item.id && item.line && item.category && item.severity && item.title && item.impact && item.mitigation);
+    assert.notEqual(item.evidenceRedacted, undefined);
+  }
+
+  // Sanitización a .env.example e idempotencia
+  assert.match(report.sanitizedExample, /^WEBHOOK_URL=https:\/\/api\.example\.com\/\.\.\.$/m);
+  assert.match(report.sanitizedExample, /^AWS_ACCESS_KEY_ID="AKIA_REPLACE_WITH_KEY_ID"$/m);
+  assert.match(report.sanitizedExample, /^AWS_TEMP_KEY=AKIA_REPLACE_WITH_KEY_ID$/m);
+  assert.match(report.sanitizedExample, /^HOST=127\.0\.0\.1$/m);
+  assert.match(report.sanitizedExample, /^PORT=3000$/m);
+  assert.equal(auditEnvContent(report.sanitizedExample).findings.length, 0);
+
+  // Filtro BAJA en store y PDF con los nuevos hallazgos
+  const store = createInspectorStore();
+  store.setEnvSeverityFilter('BAJA');
+  assert.equal(store.getState().envSession.severityFilter, 'BAJA');
+
+  const pdfResult = generateSecurityAuditPdf({
+    mode: 'env',
+    now: new Date(2026, 10, 11, 17, 30, 0),
+    session: {
+      sourceFileName: 'infra.env',
+      sha256Fingerprint: 'b'.repeat(64),
+      auditReport: report,
+      sanitizedExample: report.sanitizedExample
+    }
+  });
+  const pdfRaw = Buffer.from(pdfResult.pdfBytes).toString('latin1');
+  assert.doesNotMatch(pdfRaw, /AKIAIOSFODNN7EXAMPLE/);
+  assert.match(pdfRaw, /AKIA\*\*\*\*MPLE/);
+});
+
+test('index.html vincula el favicon SVG del escudo con check y favicon.svg es válido', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const rootDir = path.resolve(import.meta.dirname, '..');
+  const html = fs.readFileSync(path.join(rootDir, 'index.html'), 'utf8');
+  const faviconSvg = fs.readFileSync(path.join(rootDir, 'favicon.svg'), 'utf8');
+
+  assert.match(html, /<link\s+rel="icon"\s+type="image\/svg\+xml"\s+href="\.\/favicon\.svg"\s*\/>/);
+  assert.match(faviconSvg, /M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z/);
+  assert.match(faviconSvg, /m9 12 2 2 4-4/);
+});
+
+
 

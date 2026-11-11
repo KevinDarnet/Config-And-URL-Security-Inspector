@@ -15,24 +15,13 @@ import {
 
 const MAX_ENV_FILE_BYTES = 512 * 1024; // 512 KB evita bloqueo del hilo principal ante archivos binarios grandes.
 
-const SAMPLE_VULNERABLE_ENV = `# Configuración del microservicio de pagos (Staging/Prod)
-APP_NAME=checkout-core-api
-PORT=4000
+const ENV_TEST_TEMPLATE = `# Plantilla de prueba (.env)
+APP_NAME=mi-servicio-api
+NODE_ENV=production
+PORT=3000
 LOG_LEVEL=info
-
-# Motores de persistencia y caché
-DATABASE_URL="postgres://billing_admin:Pr0d_DbP@ss99!@pg-primary.internal:5432/payments_prod"
-MONGODB_URI=mongodb+srv://analytics_svc:M0ng0Clust3rKey@cluster0.corp.mongodb.net/events
-
-# Proveedores externos y criptografía
-STRIPE_SECRET_KEY=sk_live_51N9xYzAbCdEfGhIjKlMnOpQrStUvWxYz123456
-GOOGLE_GEOCODING_KEY=AIzaSyDaGmWKa4JsXZ-HjGw7xY9876543210abc
-SERVICE_MESH_JWT=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhdXRoLWdhdGV3YXkiLCJyb2xlIjoiYWRtaW4ifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
-
-# Correo transaccional y banderas operativas
-SMTP_PASSWORD=correoClavePlana#2026 # credencial de relay interno
-DEBUG=true
-CORS_ORIGIN=*
+API_BASE_URL=https://api.tu-servicio.com/v1
+SESSION_SECRET=change_me_locally
 `;
 
 export function mountEnvPanel({ rootElement, store, toast }) {
@@ -44,7 +33,8 @@ export function mountEnvPanel({ rootElement, store, toast }) {
   const fileInput = rootElement.querySelector('#env-file-input');
   const sourceBadge = rootElement.querySelector('#env-source-badge');
 
-  const loadSampleBtn = rootElement.querySelector('#env-load-sample-btn');
+  const auditEnvBtn = rootElement.querySelector('#env-audit-btn');
+  const loadTemplateBtn = rootElement.querySelector('#env-load-template-btn');
   const generateSecretBtn = rootElement.querySelector('#env-generate-secret-btn');
   const clearEnvBtn = rootElement.querySelector('#env-clear-btn');
 
@@ -79,7 +69,9 @@ export function mountEnvPanel({ rootElement, store, toast }) {
           ? 'text-rose-400 font-semibold'
           : severity === SEVERITY.MEDIUM
             ? 'text-amber-400 font-semibold'
-            : 'text-slate-600';
+            : severity === SEVERITY.LOW
+              ? 'text-sky-400 font-semibold'
+              : 'text-slate-600';
       items.push(`<span class="block ${colorClass}">${lineNum}</span>`);
     }
 
@@ -136,9 +128,14 @@ export function mountEnvPanel({ rootElement, store, toast }) {
         return;
       }
 
+      if (content.trim().length === 0) {
+        toast.show(`El archivo "${file.name}" está vacío.`, 'warning');
+        return;
+      }
+
       editorTextarea.value = content;
       runInspection(content, file.name);
-      toast.show(`Archivo "${file.name}" cargado en memoria local.`, 'success');
+      toast.show(`Archivo "${file.name}" auditado localmente en memoria.`, 'success');
     };
 
     reader.readAsText(file, 'utf-8');
@@ -162,11 +159,16 @@ export function mountEnvPanel({ rootElement, store, toast }) {
     syncEditorScroll();
   }
 
-  function renderSummaryStrip(auditReport) {
-    if (!auditReport || auditReport.stats.analyzedKeys === 0) {
+  function renderSummaryStrip(auditReport, rawText) {
+    if (!auditReport) {
+      const hasDraft = rawText.trim().length > 0;
       summaryContainer.innerHTML = `
         <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-950/70 border border-slate-800/90 px-3.5 py-2.5 text-xs text-slate-400">
-          <span>Esperando variables de entorno para auditar en cliente…</span>
+          <span>${
+            hasDraft
+              ? 'Contenido listo en el editor. Presiona «Auditar .env» para iniciar la inspección.'
+              : 'Ingresa variables de entorno o carga un archivo .env para iniciar el análisis estático.'
+          }</span>
           <span class="inline-flex items-center gap-1.5 font-mono text-[11px] text-cyan-400">
             <span class="h-1.5 w-1.5 rounded-full bg-cyan-400"></span>0 bytes enviados a red
           </span>
@@ -175,8 +177,18 @@ export function mountEnvPanel({ rootElement, store, toast }) {
       return;
     }
 
-    const { analyzedKeys, highCount, mediumCount } = auditReport.stats;
-    const isClean = highCount === 0 && mediumCount === 0;
+    if (auditReport.stats.analyzedKeys === 0) {
+      summaryContainer.innerHTML = `
+        <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-amber-500/10 border border-amber-500/30 px-3.5 py-2.5 text-xs text-amber-200">
+          <span>No se encontraron asignaciones válidas con formato <code class="font-mono">CLAVE=VALOR</code>.</span>
+          <span class="font-mono text-[11px] text-amber-300">0 claves analizadas</span>
+        </div>
+      `;
+      return;
+    }
+
+    const { analyzedKeys, highCount, mediumCount, lowCount = 0 } = auditReport.stats;
+    const isClean = highCount === 0 && mediumCount === 0 && lowCount === 0;
 
     const statusBadge = isClean
       ? `<span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-1 text-xs font-semibold text-emerald-300">
@@ -186,9 +198,13 @@ export function mountEnvPanel({ rootElement, store, toast }) {
         ? `<span class="inline-flex items-center gap-1.5 rounded-full bg-rose-500/15 border border-rose-500/35 px-2.5 py-1 text-xs font-semibold text-rose-300">
              <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>RIESGO CRÍTICO DETECTADO
            </span>`
-        : `<span class="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 border border-amber-500/35 px-2.5 py-1 text-xs font-semibold text-amber-300">
-             <span class="h-1.5 w-1.5 rounded-full bg-amber-400"></span>REVISIÓN RECOMENDADA
-           </span>`;
+        : mediumCount > 0
+          ? `<span class="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 border border-amber-500/35 px-2.5 py-1 text-xs font-semibold text-amber-300">
+               <span class="h-1.5 w-1.5 rounded-full bg-amber-400"></span>REVISIÓN RECOMENDADA
+             </span>`
+          : `<span class="inline-flex items-center gap-1.5 rounded-full bg-sky-500/15 border border-sky-500/35 px-2.5 py-1 text-xs font-semibold text-sky-300">
+               <span class="h-1.5 w-1.5 rounded-full bg-sky-400"></span>OBSERVACIÓN INFORMATIVA
+             </span>`;
 
     summaryContainer.innerHTML = `
       <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-950/80 border border-slate-800 px-3.5 py-3">
@@ -198,12 +214,15 @@ export function mountEnvPanel({ rootElement, store, toast }) {
             ${analyzedKeys} ${analyzedKeys === 1 ? 'clave' : 'claves'}
           </span>
         </div>
-        <div class="flex items-center gap-2 font-mono text-xs">
+        <div class="flex flex-wrap items-center gap-2 font-mono text-xs">
           <span class="rounded-md bg-rose-500/15 border border-rose-500/30 px-2 py-0.5 text-rose-300">
             ALTA: ${highCount}
           </span>
           <span class="rounded-md bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 text-amber-300">
             MEDIA: ${mediumCount}
+          </span>
+          <span class="rounded-md bg-sky-500/15 border border-sky-500/30 px-2 py-0.5 text-sky-300">
+            BAJA: ${lowCount}
           </span>
         </div>
       </div>
@@ -211,12 +230,24 @@ export function mountEnvPanel({ rootElement, store, toast }) {
   }
 
   function renderFindingsList(auditReport, severityFilter) {
-    if (!auditReport || auditReport.stats.analyzedKeys === 0) {
+    if (!auditReport) {
       findingsList.innerHTML = `
         <div class="rounded-xl border border-dashed border-slate-800 bg-slate-950/40 p-6 text-center">
-          <p class="text-sm font-medium text-slate-300">Ningún hallazgo activo</p>
+          <p class="text-sm font-medium text-slate-300">Sin auditoría ejecutada</p>
           <p class="mt-1 text-xs text-slate-500">
-            Pega el contenido de tu archivo <code class="font-mono text-slate-400">.env</code>, arrástralo al recuadro o carga el ejemplo de prueba.
+            Pega el contenido de tu archivo, arrastra un fichero (<code class="font-mono text-slate-400">.env</code>, <code class="font-mono text-slate-400">.env.local</code>, <code class="font-mono text-slate-400">.env.production</code>) o usa <strong class="text-slate-400">Auditar .env</strong>.
+          </p>
+        </div>
+      `;
+      return;
+    }
+
+    if (auditReport.stats.analyzedKeys === 0) {
+      findingsList.innerHTML = `
+        <div class="rounded-xl border border-dashed border-amber-500/30 bg-amber-500/5 p-6 text-center">
+          <p class="text-sm font-medium text-amber-200">No hay variables analizables</p>
+          <p class="mt-1 text-xs text-slate-400">
+            El bloque ingresado solo contiene líneas vacías, comentarios <code class="font-mono">#</code> o líneas sin formato <code class="font-mono">CLAVE=VALOR</code>.
           </p>
         </div>
       `;
@@ -255,12 +286,20 @@ export function mountEnvPanel({ rootElement, store, toast }) {
     findingsList.innerHTML = filtered
       .map((finding) => {
         const isHigh = finding.severity === SEVERITY.HIGH;
+        const isMedium = finding.severity === SEVERITY.MEDIUM;
         const cardBorder = isHigh
           ? 'border-rose-500/30 hover:border-rose-500/50'
-          : 'border-amber-500/30 hover:border-amber-500/50';
+          : isMedium
+            ? 'border-amber-500/30 hover:border-amber-500/50'
+            : 'border-sky-500/30 hover:border-sky-500/50';
         const severityBadge = isHigh
           ? 'bg-rose-500/15 text-rose-300 border-rose-500/35'
-          : 'bg-amber-500/15 text-amber-300 border-amber-500/35';
+          : isMedium
+            ? 'bg-amber-500/15 text-amber-300 border-amber-500/35'
+            : 'bg-sky-500/15 text-sky-300 border-sky-500/35';
+        const lineNum = finding.line ?? finding.lineNumber;
+        const evidence = finding.evidenceRedacted ?? finding.maskedPreview;
+        const mitigation = finding.mitigation ?? finding.remediation;
 
         return `
           <article class="rounded-xl bg-slate-950/75 border ${cardBorder} p-4 transition-colors">
@@ -275,11 +314,11 @@ export function mountEnvPanel({ rootElement, store, toast }) {
               </div>
               <button
                 type="button"
-                data-jump-line="${finding.lineNumber}"
+                data-jump-line="${lineNum}"
                 class="min-h-[34px] rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700/70 px-2.5 py-1 font-mono text-xs text-cyan-300 transition-colors"
-                title="Ubicar cursor en la línea ${finding.lineNumber}"
+                title="Ubicar cursor en la línea ${lineNum}"
               >
-                Línea ${finding.lineNumber} →
+                Línea ${lineNum} →
               </button>
             </div>
 
@@ -288,11 +327,19 @@ export function mountEnvPanel({ rootElement, store, toast }) {
             <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-slate-900/90 border border-slate-800 px-3 py-2 font-mono text-xs">
               <span class="text-cyan-300">${escapeHtml(finding.key)}</span>
               <span class="text-slate-600">=</span>
-              <span class="break-all text-slate-300">${escapeHtml(finding.maskedPreview)}</span>
+              <span class="break-all text-slate-300">${escapeHtml(evidence)}</span>
             </div>
 
-            <p class="mt-2.5 text-xs leading-relaxed text-slate-400">
-              <strong class="text-slate-200">Mitigación:</strong> ${escapeHtml(finding.remediation)}
+            ${
+              finding.impact
+                ? `<p class="mt-2.5 text-xs leading-relaxed text-slate-300/90">
+                     <strong class="text-slate-200">Impacto:</strong> ${escapeHtml(finding.impact)}
+                   </p>`
+                : ''
+            }
+
+            <p class="mt-2 text-xs leading-relaxed text-slate-400">
+              <strong class="text-slate-200">Mitigación:</strong> ${escapeHtml(mitigation)}
             </p>
           </article>
         `;
@@ -322,11 +369,15 @@ export function mountEnvPanel({ rootElement, store, toast }) {
         : 'min-h-[44px] rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800 px-3.5 py-2 text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors';
     }
 
-    renderSummaryStrip(auditReport);
+    renderSummaryStrip(auditReport, rawText);
     renderFindingsList(auditReport, severityFilter);
 
+    if (auditEnvBtn) {
+      auditEnvBtn.disabled = rawText.trim().length === 0;
+    }
+
     exampleOutput.textContent =
-      sanitizedExample || '# El archivo .env.example sanitizado se generará automáticamente aquí…';
+      sanitizedExample || '# El archivo .env.example sanitizado se generará al auditar tus variables…';
     copyExampleBtn.disabled = !sanitizedExample;
     downloadExampleBtn.disabled = !sanitizedExample;
     if (exportPdfBtn) {
@@ -346,7 +397,15 @@ export function mountEnvPanel({ rootElement, store, toast }) {
 
   // Eventos del editor y sincronización de scroll
   editorTextarea.addEventListener('input', (event) => {
-    runInspection(event.target.value, null);
+    fingerprintSequence += 1;
+    store.setEnvDraft({ rawText: event.target.value, sourceFileName: null });
+  });
+
+  editorTextarea.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      auditEnvBtn?.click();
+    }
   });
 
   editorTextarea.addEventListener('scroll', syncEditorScroll, { passive: true });
@@ -377,11 +436,22 @@ export function mountEnvPanel({ rootElement, store, toast }) {
     handleLocalFile(droppedFile);
   });
 
-  // Botones de acción rápida
-  loadSampleBtn.addEventListener('click', () => {
-    editorTextarea.value = SAMPLE_VULNERABLE_ENV;
-    runInspection(SAMPLE_VULNERABLE_ENV, 'muestra-staging.env');
-    toast.show('Muestra de auditoría cargada localmente.', 'info');
+  // Botones de acción principal y secundaria
+  auditEnvBtn?.addEventListener('click', () => {
+    const rawText = editorTextarea.value;
+    if (rawText.trim().length === 0) {
+      toast.show('Ingresa o carga un archivo .env antes de auditar.', 'warning');
+      return;
+    }
+    const existingSource = store.getState().envSession.sourceFileName;
+    runInspection(rawText, existingSource);
+  });
+
+  loadTemplateBtn?.addEventListener('click', () => {
+    fingerprintSequence += 1;
+    store.setEnvDraft({ rawText: ENV_TEST_TEMPLATE, sourceFileName: null });
+    editorTextarea.focus();
+    toast.show('Plantilla de prueba cargada en el editor. Presiona «Auditar .env» para analizar.', 'info');
   });
 
   generateSecretBtn.addEventListener('click', async () => {

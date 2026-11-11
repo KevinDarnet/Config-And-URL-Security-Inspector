@@ -7,23 +7,26 @@ import { SEVERITY } from '../security/envAuditor.js';
 import { inspectEndpointUrl } from '../security/urlInspector.js';
 import { copyTextToClipboard, escapeHtml, exportSecurityReportPdf } from './domUtils.js';
 
-const PRESET_ENDPOINTS = Object.freeze({
-  'http-query-leak': 'http://api.billing-staging.internal:8080/v1/checkout/callback?token=eyJhbGciOiJIUzI1NiJ9.eyJ1aWQiOjg0fQ.sig&api_key=sk_live_9876543210abcdef',
-  'uri-creds-db': 'http://root:Sup3rAdmin2026@mongo-node01.corp.net:27017/users_prod?auth=legacy_secret',
-  'clean-https': 'https://api.plataforma.dev/v2/orders?page=1&per_page=25&status=paid'
-});
+const URL_TEST_TEMPLATE = 'https://api.tu-servicio.com/v1/resource';
 
 export function mountUrlPanel({ rootElement, store, toast }) {
   const formElement = rootElement.querySelector('#url-inspector-form');
   const urlInput = rootElement.querySelector('#url-raw-input');
+  const inspectBtn = rootElement.querySelector('#url-inspect-btn');
   const clearUrlBtn = rootElement.querySelector('#url-clear-btn');
-  const presetButtons = Array.from(rootElement.querySelectorAll('[data-url-preset]'));
+  const loadTemplateBtn = rootElement.querySelector('#url-load-template-btn');
 
   const statusSlot = rootElement.querySelector('#url-status-slot');
   const anatomySlot = rootElement.querySelector('#url-anatomy-slot');
   const findingsSlot = rootElement.querySelector('#url-findings-slot');
 
   function runUrlAnalysis(rawUrl) {
+    if (typeof rawUrl !== 'string' || rawUrl.trim().length === 0) {
+      store.clearUrlSession();
+      toast.show('Ingresa una URL o endpoint antes de inspeccionar.', 'warning');
+      return;
+    }
+
     try {
       const inspectionReport = inspectEndpointUrl(rawUrl);
       store.setUrlInspectionResult({ rawUrl, inspectionReport });
@@ -33,11 +36,16 @@ export function mountUrlPanel({ rootElement, store, toast }) {
     }
   }
 
-  function renderStatusBanner(report) {
+  function renderStatusBanner(report, rawUrl) {
     if (!report || report.isEmpty) {
+      const hasDraft = typeof rawUrl === 'string' && rawUrl.trim().length > 0;
       statusSlot.innerHTML = `
         <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-950/70 border border-slate-800/90 px-4 py-3 text-xs text-slate-400">
-          <span>Introduce una URL o endpoint para ejecutar inspección estática con <code class="font-mono text-slate-300">new URL()</code>.</span>
+          <span>${
+            hasDraft
+              ? 'Endpoint listo para evaluar. Presiona «Inspeccionar» para iniciar el análisis estático.'
+              : 'Ingresa una URL o endpoint para iniciar el análisis estático'
+          }</span>
           <span class="inline-flex items-center gap-1.5 font-mono text-[11px] text-cyan-400">
             <span class="h-1.5 w-1.5 rounded-full bg-cyan-400"></span>Sin peticiones HTTP/DNS externas
           </span>
@@ -72,9 +80,9 @@ export function mountUrlPanel({ rootElement, store, toast }) {
         <div role="alert" class="rounded-xl border border-rose-500/35 bg-rose-500/10 p-4">
           <div class="flex items-center gap-2">
             <span class="inline-flex items-center rounded-md bg-rose-500/20 border border-rose-500/40 px-2 py-0.5 font-mono text-[11px] font-bold text-rose-300">
-              FORMATO INVÁLIDO
+              WHATWG URL INVÁLIDA
             </span>
-            <h3 class="text-sm font-semibold text-rose-200">No se pudo parsear la URI</h3>
+            <h3 class="text-sm font-semibold text-rose-200">Error de validación: formato de URI no válido</h3>
           </div>
           <p class="mt-1.5 text-xs leading-relaxed text-rose-200/85">
             ${escapeHtml(report.errorMessage)}
@@ -244,14 +252,7 @@ export function mountUrlPanel({ rootElement, store, toast }) {
 
   function renderDiagnosticCards(report) {
     if (!report || report.isEmpty || !report.isValid) {
-      findingsSlot.innerHTML = `
-        <div class="rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 p-7 text-center">
-          <p class="text-sm font-medium text-slate-300">Diagnóstico estático listo</p>
-          <p class="mt-1 text-xs text-slate-500">
-            Se evaluarán protocolo TLS, credenciales <code class="font-mono text-slate-400">user:pass@host</code>, secretos en Query String y exposición de puertos no estándar.
-          </p>
-        </div>
-      `;
+      findingsSlot.innerHTML = '';
       return;
     }
 
@@ -327,7 +328,11 @@ export function mountUrlPanel({ rootElement, store, toast }) {
       urlInput.value = rawUrl;
     }
 
-    renderStatusBanner(inspectionReport);
+    if (inspectBtn) {
+      inspectBtn.disabled = rawUrl.trim().length === 0;
+    }
+
+    renderStatusBanner(inspectionReport, rawUrl);
     renderAnatomyCard(inspectionReport);
     renderDiagnosticCards(inspectionReport);
   }
@@ -338,7 +343,7 @@ export function mountUrlPanel({ rootElement, store, toast }) {
   });
 
   urlInput.addEventListener('input', (event) => {
-    runUrlAnalysis(event.target.value);
+    store.setUrlDraft(event.target.value);
   });
 
   clearUrlBtn.addEventListener('click', () => {
@@ -347,17 +352,10 @@ export function mountUrlPanel({ rootElement, store, toast }) {
     toast.show('Campo de endpoint limpiado.', 'info');
   });
 
-  presetButtons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const presetKey = btn.dataset.urlPreset;
-      const sampleUrl = PRESET_ENDPOINTS[presetKey];
-      if (!sampleUrl) {
-        return;
-      }
-      urlInput.value = sampleUrl;
-      runUrlAnalysis(sampleUrl);
-      toast.show('Escenario de prueba cargado.', 'info');
-    });
+  loadTemplateBtn?.addEventListener('click', () => {
+    store.setUrlDraft(URL_TEST_TEMPLATE);
+    urlInput.focus();
+    toast.show('Plantilla de prueba cargada. Presiona «Inspeccionar» para analizar.', 'info');
   });
 
   statusSlot.addEventListener('click', (event) => {

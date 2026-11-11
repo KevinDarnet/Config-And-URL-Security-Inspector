@@ -40,12 +40,14 @@ function copyDirRecursive(src, dest) {
 
 // Copiar archivos estáticos clave a dist
 fs.copyFileSync(path.join(projectRoot, 'index.html'), path.join(distDir, 'index.html'));
+fs.copyFileSync(path.join(projectRoot, 'favicon.svg'), path.join(distDir, 'favicon.svg'));
 copyDirRecursive(path.join(projectRoot, 'src'), path.join(distDir, 'src'));
 copyDirRecursive(path.join(projectRoot, 'styles'), path.join(distDir, 'styles'));
 
 console.log('[Build] 3/3 Verificando assets y estructura en dist/...');
 const distFiles = [
   path.join(distDir, 'index.html'),
+  path.join(distDir, 'favicon.svg'),
   path.join(distDir, 'src/main.js'),
   path.join(distDir, 'styles/app.css')
 ];

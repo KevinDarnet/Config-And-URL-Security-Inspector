@@ -312,40 +312,51 @@ const COLORS = Object.freeze({
   highText: [0.745, 0.071, 0.235],
   medBg: [1.000, 0.984, 0.922],
   medText: [0.706, 0.325, 0.035],
+  lowBg: [0.941, 0.976, 1.000],
+  lowText: [0.012, 0.412, 0.631],
   okBg: [0.925, 0.992, 0.961],
   okText: [0.024, 0.471, 0.341]
 });
 
 function renderSummaryHeader(canvas, reportData) {
   const { moduleLabel, generatedAtLabel, summary } = reportData;
-  const headerHeight = 68;
+  const headerHeight = 82;
   const headerTop = canvas.getCursorY();
 
   canvas.drawRect(MARGIN_X, headerTop - headerHeight, CONTENT_WIDTH, headerHeight, COLORS.headerBg);
   canvas.drawRect(MARGIN_X, headerTop - headerHeight, CONTENT_WIDTH, 3, COLORS.cyan);
 
-  canvas.drawText('Reporte de Auditoría de Seguridad', MARGIN_X + 16, headerTop - 25, 'F2', 16, COLORS.white);
+  canvas.drawText('Reporte de Auditoría de Seguridad', MARGIN_X + 16, headerTop - 24, 'F2', 16, COLORS.white);
   canvas.drawText(
     `Módulo: ${moduleLabel}  |  Generado: ${generatedAtLabel}`,
     MARGIN_X + 16,
-    headerTop - 44,
+    headerTop - 41,
     'F1',
     9.5,
     COLORS.slateLight
   );
-  canvas.drawText('100% Client-Side | Datos sensibles redactados', MARGIN_X + 16, headerTop - 57, 'F3', 8, COLORS.cyan);
+  canvas.drawText(
+    'Origen: Entrada provista por el usuario (Evaluación en memoria local)',
+    MARGIN_X + 16,
+    headerTop - 55,
+    'F1',
+    8.5,
+    COLORS.white
+  );
+  canvas.drawText('100% Client-Side | Datos sensibles redactados', MARGIN_X + 16, headerTop - 70, 'F3', 8, COLORS.cyan);
 
   canvas.moveCursor(headerHeight + 14);
 
-  // Tira de resumen de severidades (Críticas, Altas, Medias)
-  const cardGap = 8;
-  const cardWidth = (CONTENT_WIDTH - cardGap * 3) / 4;
+  // Tira de resumen de severidades (Críticas, Altas, Medias, Bajas)
+  const cardGap = 7;
+  const cardWidth = (CONTENT_WIDTH - cardGap * 4) / 5;
   const cardHeight = 42;
   const cards = [
     { label: 'CRÍTICAS', value: String(summary.criticalCount), bg: COLORS.highBg, accent: COLORS.highText },
     { label: 'ALTAS', value: String(summary.highCount), bg: COLORS.highBg, accent: COLORS.highText },
     { label: 'MEDIAS', value: String(summary.mediumCount), bg: COLORS.medBg, accent: COLORS.medText },
-    { label: 'TOTAL HALLAZGOS', value: String(summary.totalFindings), bg: COLORS.boxBg, accent: COLORS.slateDark }
+    { label: 'BAJAS', value: String(summary.lowCount ?? 0), bg: COLORS.lowBg, accent: COLORS.lowText },
+    { label: 'TOTAL', value: String(summary.totalFindings), bg: COLORS.boxBg, accent: COLORS.slateDark }
   ];
 
   const cardBottom = canvas.getCursorY() - cardHeight;
@@ -456,8 +467,9 @@ function renderFindingsSection(canvas, findings) {
     const cardBottom = cardTop - cardHeight;
 
     const isHigh = finding.severity === SEVERITY.HIGH || finding.severity === 'CRÍTICA';
-    const badgeBg = isHigh ? COLORS.highBg : COLORS.medBg;
-    const badgeColor = isHigh ? COLORS.highText : COLORS.medText;
+    const isMedium = finding.severity === SEVERITY.MEDIUM;
+    const badgeBg = isHigh ? COLORS.highBg : isMedium ? COLORS.medBg : COLORS.lowBg;
+    const badgeColor = isHigh ? COLORS.highText : isMedium ? COLORS.medText : COLORS.lowText;
 
     canvas.drawRect(MARGIN_X, cardBottom, CONTENT_WIDTH, cardHeight, [1, 1, 1], COLORS.boxBorder, 0.65);
     canvas.drawRect(MARGIN_X, cardBottom, 3.5, cardHeight, badgeColor);
@@ -515,21 +527,26 @@ function normalizeEnvReportData(envSession, now) {
       criticalCount: 0,
       highCount: stats.highCount,
       mediumCount: stats.mediumCount,
+      lowCount: stats.lowCount ?? 0,
       totalFindings: rawFindings.length
     },
     sectionTitle: 'Configuración Analizada (Sanitizada a .env.example)',
     metadataLines: [
-      `Origen: ${sourceFileName || 'Entrada directa en memoria'}  |  Variables analizadas: ${stats.analyzedKeys}`,
+      `Archivo / Fuente: ${sourceFileName || 'Entrada directa en editor'}  |  Variables analizadas: ${stats.analyzedKeys}`,
       `Huella SHA-256 local: ${sha256Fingerprint || 'No disponible fuera de contexto seguro'}`
     ],
     codeLines: sanitizedLines,
-    findings: rawFindings.map((item) => ({
-      severity: item.severity,
-      metaTag: `Línea ${item.lineNumber} | ${item.category}`,
-      title: `${item.title} (${item.key})`,
-      impact: `Variable "${item.key}" en línea ${item.lineNumber} expone un valor de riesgo (${item.maskedPreview}).`,
-      mitigation: item.remediation
-    }))
+    findings: rawFindings.map((item) => {
+      const lineNum = item.line ?? item.lineNumber;
+      const evidence = item.evidenceRedacted ?? item.maskedPreview;
+      return {
+        severity: item.severity,
+        metaTag: `Línea ${lineNum} | ${item.category} | Evidencia: ${evidence}`,
+        title: `${item.title} (${item.key})`,
+        impact: item.impact || `Variable "${item.key}" en línea ${lineNum} expone un valor de riesgo (${evidence}).`,
+        mitigation: item.mitigation ?? item.remediation
+      };
+    })
   };
 }
 
@@ -577,6 +594,7 @@ function normalizeUrlReportData(urlSession, now) {
       criticalCount: 0,
       highCount: stats.highCount,
       mediumCount: stats.mediumCount,
+      lowCount: 0,
       totalFindings: rawFindings.length
     },
     sectionTitle: 'Endpoint Analizado (Credenciales y Tokens Redactados)',

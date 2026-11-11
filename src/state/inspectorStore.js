@@ -5,7 +5,7 @@
  */
 
 const VALID_MODULES = new Set(['env', 'url']);
-const VALID_SEVERITY_FILTERS = new Set(['ALL', 'ALTA', 'MEDIA']);
+const VALID_SEVERITY_FILTERS = new Set(['ALL', 'ALTA', 'MEDIA', 'BAJA']);
 
 export function createInitialInspectorState() {
   return Object.freeze({
@@ -71,6 +71,22 @@ export function createInspectorStore(initialOverrides = {}) {
       commitNextState({ activeModule: moduleId }, 'module:switch');
     },
 
+    setEnvDraft({ rawText, sourceFileName = null }) {
+      commitNextState(
+        {
+          envSession: Object.freeze({
+            ...currentState.envSession,
+            rawText,
+            sourceFileName,
+            auditReport: null,
+            sanitizedExample: '',
+            sha256Fingerprint: null
+          })
+        },
+        'env:draft'
+      );
+    },
+
     setEnvInspectionResult({ rawText, sourceFileName = null, auditReport, sanitizedExample, sha256Fingerprint = null }) {
       commitNextState(
         {
@@ -123,6 +139,18 @@ export function createInspectorStore(initialOverrides = {}) {
           envSession: createInitialInspectorState().envSession
         },
         'env:cleared'
+      );
+    },
+
+    setUrlDraft(rawUrl) {
+      commitNextState(
+        {
+          urlSession: Object.freeze({
+            rawUrl,
+            inspectionReport: null
+          })
+        },
+        'url:draft'
       );
     },
 

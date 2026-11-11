@@ -13,6 +13,7 @@
     content="Config & URL Security Inspector — Auditor local de archivos .env, generador de .env.example y analizador estático de endpoints."
   />
   <title>Config &amp; URL Security Inspector</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
 
   <!-- Bloqueo inmediato de fondo oscuro mate antes de pintar el primer frame -->
   <style>
@@ -149,8 +150,10 @@
                   </svg>
                 </div>
                 <div>
-                  <p class="text-xs font-medium text-slate-200">Arrastra tu archivo <code class="font-mono text-cyan-300">.env</code> aquí</p>
-                  <p class="text-[11px] text-slate-500">Lectura local mediante FileReader (máx. 512 KB)</p>
+                  <p class="text-xs font-medium text-slate-200">
+                    Arrastra tu archivo <code class="font-mono text-cyan-300">.env</code>, <code class="font-mono text-cyan-300">.env.local</code> o <code class="font-mono text-cyan-300">.env.production</code> aquí
+                  </p>
+                  <p class="text-[11px] text-slate-500">Lectura en memoria local vía FileReader API (máx. 512 KB)</p>
                 </div>
               </div>
 
@@ -207,7 +210,7 @@
                     autocapitalize="off"
                     autocomplete="off"
                     autocorrect="off"
-                    placeholder="# Pega tu configuración .env aquí&#10;DATABASE_URL=postgres://user:secret@db.host:5432/app&#10;STRIPE_SECRET_KEY=sk_live_...&#10;ADMIN_PASSWORD=..."
+                    placeholder="# Pega aquí las variables de tu archivo .env&#10;PORT=3000&#10;NODE_ENV=production&#10;API_BASE_URL=https://api.tu-servicio.com/v1"
                     class="env-editor-metrics env-textarea-overlay absolute inset-0 m-0 h-full w-full overflow-auto p-3.5 focus:outline-none"
                   ></textarea>
                 </div>
@@ -217,17 +220,26 @@
             <!-- Barra de utilidades táctiles (hitboxes >= 44px) -->
             <div class="mt-4 flex flex-wrap items-center gap-2.5">
               <button
-                id="env-load-sample-btn"
+                id="env-audit-btn"
                 type="button"
-                class="min-h-[44px] rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-400/30 px-3.5 py-2 text-xs font-semibold text-indigo-300 transition-colors"
+                disabled
+                class="min-h-[44px] rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 disabled:opacity-40 disabled:pointer-events-none border border-cyan-400/40 px-4 py-2 text-xs font-semibold text-cyan-200 shadow-argon-glow transition-all"
               >
-                Cargar muestra con riesgos
+                Auditar .env
+              </button>
+
+              <button
+                id="env-load-template-btn"
+                type="button"
+                class="min-h-[44px] rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/70 px-3.5 py-2 text-xs font-medium text-slate-300 transition-colors"
+              >
+                Cargar plantilla de prueba
               </button>
 
               <button
                 id="env-generate-secret-btn"
                 type="button"
-                class="min-h-[44px] rounded-xl bg-slate-800 hover:bg-slate-700/80 border border-slate-700/60 px-3.5 py-2 text-xs font-medium text-cyan-300 transition-colors"
+                class="min-h-[44px] rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 px-3.5 py-2 text-xs font-medium text-cyan-300 transition-colors"
                 title="Generar secreto criptográfico de 32 bytes con crypto.getRandomValues"
               >
                 Generar secreto 256-bit
@@ -312,6 +324,9 @@
                   <button type="button" data-env-filter="MEDIA" aria-pressed="false" class="min-h-[44px] rounded-lg bg-slate-900/80 border border-slate-800 px-3.5 py-2 text-xs font-medium text-slate-400">
                     Media
                   </button>
+                  <button type="button" data-env-filter="BAJA" aria-pressed="false" class="min-h-[44px] rounded-lg bg-slate-900/80 border border-slate-800 px-3.5 py-2 text-xs font-medium text-slate-400">
+                    Baja
+                  </button>
                 </div>
 
                 <button
@@ -370,15 +385,17 @@
                 spellcheck="false"
                 autocapitalize="off"
                 autocomplete="off"
-                placeholder="https://api.midominio.com/v1/users?token=..."
+                placeholder="https://api.tu-servicio.com/v1/resource"
                 class="min-h-[48px] w-full rounded-xl bg-slate-950/95 border border-slate-800 focus:border-cyan-500/60 px-4 py-3 font-mono text-base sm:text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none transition-colors"
               />
             </div>
 
             <div class="flex items-center gap-2.5">
               <button
+                id="url-inspect-btn"
                 type="submit"
-                class="flex-1 sm:flex-initial min-h-[48px] rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 px-5 py-2.5 text-sm font-semibold text-cyan-200 shadow-argon-glow transition-all"
+                disabled
+                class="flex-1 sm:flex-initial min-h-[48px] rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 disabled:opacity-40 disabled:pointer-events-none border border-cyan-400/40 px-5 py-2.5 text-sm font-semibold text-cyan-200 shadow-argon-glow transition-all"
               >
                 Inspeccionar
               </button>
@@ -392,33 +409,18 @@
             </div>
           </form>
 
-          <!-- Escenarios rápidos de prueba táctiles -->
-          <div class="mt-4 flex flex-wrap items-center gap-2">
-            <span class="text-xs text-slate-500 mr-1">Casos de prueba:</span>
-
+          <!-- Plantilla secundaria de prueba (solo puebla el campo sin auto-ejecutar análisis) -->
+          <div class="mt-4 flex flex-wrap items-center gap-2.5">
             <button
+              id="url-load-template-btn"
               type="button"
-              data-url-preset="http-query-leak"
-              class="min-h-[44px] rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 px-3.5 py-2 text-xs font-medium text-amber-300 transition-colors"
+              class="min-h-[44px] rounded-xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/70 px-3.5 py-2 text-xs font-medium text-slate-300 transition-colors"
             >
-              HTTP + Query Token (:8080)
+              Cargar plantilla de prueba
             </button>
-
-            <button
-              type="button"
-              data-url-preset="uri-creds-db"
-              class="min-h-[44px] rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 px-3.5 py-2 text-xs font-medium text-rose-300 transition-colors"
-            >
-              URI user:pass + Mongo (:27017)
-            </button>
-
-            <button
-              type="button"
-              data-url-preset="clean-https"
-              class="min-h-[44px] rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 px-3.5 py-2 text-xs font-medium text-emerald-300 transition-colors"
-            >
-              Endpoint HTTPS Seguro
-            </button>
+            <span class="text-xs text-slate-500">
+              Completa el campo para probar la validación y presiona <strong class="text-slate-300">Inspeccionar</strong>.
+            </span>
           </div>
         </div>
 
