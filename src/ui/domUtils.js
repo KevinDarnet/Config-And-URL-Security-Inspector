@@ -2,6 +2,8 @@
  * Utilidades seguras de interfaz y portapapeles usando APIs estándar del navegador.
  */
 
+import { generateSecurityAuditPdf } from '../security/pdfReportGenerator.js';
+
 const HTML_ESCAPE_MAP = Object.freeze({
   '&': '&amp;',
   '<': '&lt;',
@@ -54,10 +56,9 @@ export async function copyTextToClipboard(text) {
   }
 }
 
-export function downloadPlainTextFile(fileName, content) {
+export function triggerBlobDownload(fileName, blob) {
   try {
-    const fileBlob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const objectUrl = URL.createObjectURL(fileBlob);
+    const objectUrl = URL.createObjectURL(blob);
     const downloadLink = document.createElement('a');
     downloadLink.href = objectUrl;
     downloadLink.download = fileName;
@@ -68,6 +69,27 @@ export function downloadPlainTextFile(fileName, content) {
     return true;
   } catch (downloadError) {
     console.error('[FileDownload] Error al generar descarga local:', downloadError);
+    return false;
+  }
+}
+
+export function downloadPlainTextFile(fileName, content) {
+  const fileBlob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  return triggerBlobDownload(fileName, fileBlob);
+}
+
+export function exportSecurityReportPdf({ mode, session, toast }) {
+  try {
+    const { fileName, blob } = generateSecurityAuditPdf({ mode, session });
+    if (triggerBlobDownload(fileName, blob)) {
+      toast?.show(`Reporte PDF "${fileName}" generado localmente.`, 'success');
+      return true;
+    }
+    toast?.show('No se pudo iniciar la descarga del reporte PDF.', 'error');
+    return false;
+  } catch (pdfError) {
+    console.error(`[PdfExport] Error al generar reporte PDF (${mode}):`, pdfError);
+    toast?.show('Error al generar el reporte PDF en el navegador.', 'error');
     return false;
   }
 }

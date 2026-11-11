@@ -9,6 +9,7 @@ import { computeSha256Hex, generateSecureSecretHex } from '../src/security/crypt
 import { createInspectorStore } from '../src/state/inspectorStore.js';
 import { renderHighlightedEnvHtml } from '../src/ui/envHighlighter.js';
 import { escapeHtml } from '../src/ui/domUtils.js';
+import { generateSecurityAuditPdf } from '../src/security/pdfReportGenerator.js';
 
 test('auditEnvContent ignora comentarios y líneas vacías pero detecta cadenas críticas, tokens y contraseñas', () => {
   const sampleEnv = [
@@ -150,6 +151,7 @@ test('todos los selectores #id requeridos por los controladores existen en index
     'env-example-output',
     'env-copy-example-btn',
     'env-download-example-btn',
+    'env-export-pdf-btn',
     'env-copy-hash-btn',
     'env-hash-label',
     'url-inspector-form',
@@ -163,5 +165,64 @@ test('todos los selectores #id requeridos por los controladores existen en index
   for (const elementId of requiredIds) {
     assert.match(htmlContent, new RegExp(`id="${elementId}"`), `Falta id="${elementId}" en index.html`);
   }
+});
+
+test('generateSecurityAuditPdf genera PDF 1.4 válido y redacta secretos en módulos .env y URL', () => {
+  const fixedDate = new Date(2026, 10, 11, 16, 45, 30);
+
+  const sampleEnv = [
+    'DATABASE_URL="postgres://prod_admin:Sup3rS3cret!@db.internal:5432/billing"',
+    'STRIPE_KEY=sk_live_51Nabc1234567890XYZabcdef',
+    'PORT=4000'
+  ].join('\n');
+  const envReport = auditEnvContent(sampleEnv);
+
+  const envPdf = generateSecurityAuditPdf({
+    mode: 'env',
+    now: fixedDate,
+    session: {
+      sourceFileName: 'prod.env',
+      sha256Fingerprint: 'a'.repeat(64),
+      auditReport: envReport,
+      sanitizedExample: envReport.sanitizedExample
+    }
+  });
+
+  assert.equal(envPdf.fileName, 'reporte-seguridad-2026-11-11.pdf');
+  assert.equal(envPdf.blob.type, 'application/pdf');
+  const envPdfText = Buffer.from(envPdf.pdfBytes).toString('latin1');
+  assert.ok(envPdfText.startsWith('%PDF-1.4\n'));
+  assert.ok(envPdfText.trimEnd().endsWith('%%EOF'));
+  assert.match(envPdfText, /Reporte de Auditor/);
+  assert.doesNotMatch(envPdfText, /Sup3rS3cret!/);
+  assert.doesNotMatch(envPdfText, /sk_live_51Nabc1234567890XYZabcdef/);
+
+  const riskyUrl = 'http://admin:root123@db-gateway.internal:27017/metrics?api_key=sk_live_9999888877776666';
+  const urlReport = inspectEndpointUrl(riskyUrl);
+  const urlPdf = generateSecurityAuditPdf({
+    mode: 'url',
+    now: fixedDate,
+    session: {
+      rawUrl: riskyUrl,
+      inspectionReport: urlReport
+    }
+  });
+
+  assert.equal(urlPdf.fileName, 'reporte-seguridad-2026-11-11.pdf');
+  const urlPdfText = Buffer.from(urlPdf.pdfBytes).toString('latin1');
+  assert.ok(urlPdfText.startsWith('%PDF-1.4\n'));
+  assert.doesNotMatch(urlPdfText, /root123/);
+  assert.doesNotMatch(urlPdfText, /sk_live_9999888877776666/);
+
+  const cleanUrlReport = inspectEndpointUrl('https://api.segura.dev/v2/health');
+  const cleanPdf = generateSecurityAuditPdf({
+    mode: 'url',
+    now: fixedDate,
+    session: {
+      rawUrl: 'https://api.segura.dev/v2/health',
+      inspectionReport: cleanUrlReport
+    }
+  });
+  assert.ok(cleanPdf.pdfBytes.length > 500);
 });
 

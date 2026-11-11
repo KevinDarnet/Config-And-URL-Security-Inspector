@@ -5,7 +5,7 @@
 
 import { SEVERITY } from '../security/envAuditor.js';
 import { inspectEndpointUrl } from '../security/urlInspector.js';
-import { copyTextToClipboard, escapeHtml } from './domUtils.js';
+import { copyTextToClipboard, escapeHtml, exportSecurityReportPdf } from './domUtils.js';
 
 const PRESET_ENDPOINTS = Object.freeze({
   'http-query-leak': 'http://api.billing-staging.internal:8080/v1/checkout/callback?token=eyJhbGciOiJIUzI1NiJ9.eyJ1aWQiOjg0fQ.sig&api_key=sk_live_9876543210abcdef',
@@ -145,6 +145,22 @@ export function mountUrlPanel({ rootElement, store, toast }) {
             })
             .join('');
 
+    const exportPdfButtonMarkup = `
+      <button
+        type="button"
+        data-export-url-pdf
+        class="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-slate-800 hover:bg-slate-700/80 border border-slate-700/70 hover:border-cyan-500/40 px-3 py-1.5 text-xs font-semibold text-cyan-300 transition-colors"
+      >
+        <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <path d="M12 18v-6" />
+          <path d="m9 15 3 3 3-3" />
+        </svg>
+        <span>Exportar Reporte PDF</span>
+      </button>
+    `;
+
     const sanitizedSection =
       stats.totalFindings > 0
         ? `
@@ -153,18 +169,28 @@ export function mountUrlPanel({ rootElement, store, toast }) {
               <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                 Vista previa sanitizada para logs / reportes
               </span>
-              <button
-                type="button"
-                data-copy-sanitized="${escapeHtml(sanitizedHref)}"
-                class="min-h-[38px] rounded-lg bg-slate-800 hover:bg-slate-700/80 border border-slate-700/70 px-3 py-1.5 text-xs font-medium text-cyan-300 transition-colors"
-              >
-                Copiar URL redactada
-              </button>
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  data-copy-sanitized="${escapeHtml(sanitizedHref)}"
+                  class="min-h-[44px] rounded-lg bg-slate-800 hover:bg-slate-700/80 border border-slate-700/70 px-3 py-1.5 text-xs font-medium text-cyan-300 transition-colors"
+                >
+                  Copiar URL redactada
+                </button>
+                ${exportPdfButtonMarkup}
+              </div>
             </div>
             <p class="mt-1.5 break-all font-mono text-xs text-slate-300">${escapeHtml(sanitizedHref)}</p>
           </div>
         `
-        : '';
+        : `
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-950/80 border border-slate-800 p-3">
+            <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              Documentación de auditoría estática
+            </span>
+            ${exportPdfButtonMarkup}
+          </div>
+        `;
 
     anatomySlot.innerHTML = `
       <section aria-label="Desglose estructural de la URL" class="rounded-2xl bg-slate-900/90 border border-slate-800 p-4 sm:p-5 shadow-lg shadow-black/20">
@@ -345,6 +371,15 @@ export function mountUrlPanel({ rootElement, store, toast }) {
   });
 
   anatomySlot.addEventListener('click', async (event) => {
+    const exportBtn = event.target.closest('[data-export-url-pdf]');
+    if (exportBtn) {
+      const urlSession = store.getState().urlSession;
+      if (urlSession.inspectionReport?.isValid) {
+        exportSecurityReportPdf({ mode: 'url', session: urlSession, toast });
+      }
+      return;
+    }
+
     const copyBtn = event.target.closest('[data-copy-sanitized]');
     if (!copyBtn) {
       return;

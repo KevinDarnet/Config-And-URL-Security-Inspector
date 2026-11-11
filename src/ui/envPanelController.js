@@ -6,7 +6,12 @@
 import { auditEnvContent, SEVERITY } from '../security/envAuditor.js';
 import { computeSha256Hex, generateSecureSecretHex } from '../security/cryptoDigest.js';
 import { renderHighlightedEnvHtml } from './envHighlighter.js';
-import { copyTextToClipboard, downloadPlainTextFile, escapeHtml } from './domUtils.js';
+import {
+  copyTextToClipboard,
+  downloadPlainTextFile,
+  escapeHtml,
+  exportSecurityReportPdf
+} from './domUtils.js';
 
 const MAX_ENV_FILE_BYTES = 512 * 1024; // 512 KB evita bloqueo del hilo principal ante archivos binarios grandes.
 
@@ -45,6 +50,7 @@ export function mountEnvPanel({ rootElement, store, toast }) {
 
   const summaryContainer = rootElement.querySelector('#env-summary-strip');
   const filterButtons = Array.from(rootElement.querySelectorAll('[data-env-filter]'));
+  const exportPdfBtn = rootElement.querySelector('#env-export-pdf-btn');
   const findingsList = rootElement.querySelector('#env-findings-list');
 
   const exampleOutput = rootElement.querySelector('#env-example-output');
@@ -323,6 +329,9 @@ export function mountEnvPanel({ rootElement, store, toast }) {
       sanitizedExample || '# El archivo .env.example sanitizado se generará automáticamente aquí…';
     copyExampleBtn.disabled = !sanitizedExample;
     downloadExampleBtn.disabled = !sanitizedExample;
+    if (exportPdfBtn) {
+      exportPdfBtn.disabled = !auditReport || auditReport.stats.analyzedKeys === 0;
+    }
 
     if (sha256Fingerprint) {
       fingerprintLabel.textContent = `SHA-256: ${sha256Fingerprint.slice(0, 12)}…`;
@@ -466,6 +475,14 @@ export function mountEnvPanel({ rootElement, store, toast }) {
     if (copied) {
       toast.show('Hash de integridad SHA-256 copiado.', 'success');
     }
+  });
+
+  exportPdfBtn?.addEventListener('click', () => {
+    const envSession = store.getState().envSession;
+    if (!envSession.auditReport || envSession.auditReport.stats.analyzedKeys === 0) {
+      return;
+    }
+    exportSecurityReportPdf({ mode: 'env', session: envSession, toast });
   });
 
   // Suscripción reactiva al estado
